@@ -16,6 +16,7 @@
 
 @property(nonatomic,strong) NSManagedObjectContext *photoDatabaseContext;
 @property(nonatomic,strong) NSURLSession *flickrDownloadSession;
+@property(nonatomic,copy) void (^completionHandler)();
 
 @end
 
@@ -25,12 +26,21 @@
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     // Override point for customization after application launch.
-    
     self.photoDatabaseContext=self.mainQueueManagedObjectContext;
-    
     [self startFlickrFetch];
     
     return YES;
+}
+
+-(void)application:(UIApplication *)application performFetchWithCompletionHandler:(void (^)(UIBackgroundFetchResult))completionHandler
+{
+    [self startFlickrFetch];
+    completionHandler(UIBackgroundFetchResultNoData);
+}
+
+-(void)application:(UIApplication *)application handleEventsForBackgroundURLSession:(NSString *)identifier completionHandler:(void (^)())completionHandler
+{
+    self.completionHandler=completionHandler;
 }
 
 -(void)setPhotoDatabaseContext:(NSManagedObjectContext *)photoDatabaseContext
@@ -59,6 +69,10 @@
                 [context save:NULL];
             }];
         }
+        else
+        {
+            [self flickrDownloadTaskMightBeComplete];
+        }
     }
 }
 
@@ -71,7 +85,6 @@
     NSDictionary *propertyListResults = [NSJSONSerialization JSONObjectWithData:data
                                                                         options:NSJSONReadingAllowFragments
                                                                           error:&error];
-    
     if (!error) {
         NSLog(@"Flickr results=%@",propertyListResults);
        photos = [propertyListResults valueForKeyPath:FLICKR_RESULTS_PHOTOS];
@@ -80,21 +93,34 @@
     return photos;
 }
 
+-(void)flickrDownloadTaskMightBeComplete
+{
+    [self.flickrDownloadSession getTasksWithCompletionHandler:^(NSArray<NSURLSessionDataTask *> * _Nonnull dataTasks, NSArray<NSURLSessionUploadTask *> * _Nonnull uploadTasks, NSArray<NSURLSessionDownloadTask *> * _Nonnull downloadTasks) {
+        if (![downloadTasks count]) {
+            void (^completionHandler)()=self.completionHandler;
+            self.completionHandler=nil;
+            if (completionHandler) {
+                completionHandler();
+            }
+        }
+        
+    }];
+}
+
 -(void)startFlickrFetch
 {
     [[self flickrDownloadSession] getTasksWithCompletionHandler:^(NSArray<NSURLSessionDataTask *> * _Nonnull dataTasks, NSArray<NSURLSessionUploadTask *> * _Nonnull uploadTasks, NSArray<NSURLSessionDownloadTask *> * _Nonnull downloadTasks) {
         if (![downloadTasks count]) {
             NSURLSessionDownloadTask *task=[self.flickrDownloadSession downloadTaskWithURL:[FlickrFetcher URLforRecentGeoreferencedPhotos]];
             task.taskDescription=FLICKR_FTECH;
-            
             [task resume];
-       }
-       else
-       {
+        }
+        else
+        {
            for (NSURLSessionDownloadTask *task in downloadTasks) {
               [task resume];
            }
-       }
+        }
     }];
 }
 
